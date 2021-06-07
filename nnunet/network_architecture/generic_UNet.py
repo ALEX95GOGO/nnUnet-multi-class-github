@@ -266,7 +266,9 @@ class Generic_UNet(SegmentationNetwork):
         self.td = []
         self.tu = []
         self.seg_outputs = []
-
+        for i in range(self.num_classes):
+            exec('self.seg_outputs{} = [] = []'.format(i))
+            
         output_features = base_num_features
         input_features = input_channels
 
@@ -357,7 +359,11 @@ class Generic_UNet(SegmentationNetwork):
         for ds in range(len(self.conv_blocks_localization)):
             self.seg_outputs.append(conv_op(self.conv_blocks_localization[ds][-1].output_channels, num_classes,
                                             1, 1, 0, 1, 1, seg_output_use_bias))
-
+        
+        for ds in range(len(self.conv_blocks_localization)):
+            for i in range(self.num_classes):
+                exec('self.seg_outputs{}.append(conv_op(self.conv_blocks_localization[ds][-1].output_channels, 1, 1, 1, 0, 1, 1, seg_output_use_bias))'.format(i))
+            
         self.upscale_logits_ops = []
         cum_upsample = np.cumprod(np.vstack(pool_op_kernel_sizes), axis=0)[::-1]
         for usl in range(num_pool - 1):
@@ -376,6 +382,10 @@ class Generic_UNet(SegmentationNetwork):
         self.td = nn.ModuleList(self.td)
         self.tu = nn.ModuleList(self.tu)
         self.seg_outputs = nn.ModuleList(self.seg_outputs)
+
+        for i in range(self.num_classes):
+            exec('self.seg_outputs{} = nn.ModuleList(self.seg_outputs{})'.format(i,i))
+        
         if self.upscale_logits:
             self.upscale_logits_ops = nn.ModuleList(
                 self.upscale_logits_ops)  # lambda x:x is not a Module so we need to distinguish here
@@ -387,6 +397,14 @@ class Generic_UNet(SegmentationNetwork):
     def forward(self, x):
         skips = []
         seg_outputs = []
+        #seg_outputs0 = []
+        #seg_outputs1 = []
+        #seg_outputs2 = []
+        names = globals()
+        for i in range(self.num_classes):
+            names['seg_outputs' + str(i)] = []
+
+        
         for d in range(len(self.conv_blocks_context) - 1):
             x = self.conv_blocks_context[d](x)
             skips.append(x)
@@ -400,11 +418,38 @@ class Generic_UNet(SegmentationNetwork):
             x = torch.cat((x, skips[-(u + 1)]), dim=1)
             x = self.conv_blocks_localization[u](x)
             seg_outputs.append(self.final_nonlin(self.seg_outputs[u](x)))
+            
+            #seg_outputs0.append(self.final_nonlin(self.seg_outputs0[u](x)))
+            #seg_outputs1.append(self.final_nonlin(self.seg_outputs1[u](x)))
+            #seg_outputs2.append(self.final_nonlin(self.seg_outputs2[u](x)))
+            
+            for i in range(self.num_classes):
+                exec('seg_outputs{}.append(self.final_nonlin(self.seg_outputs{}[u](x)))'.format(i,i))
+        
+        
+        final_output = seg_outputs0[-1]    
+        #if len(seg_outputs0[-1].shape)==4:
+        #    final_output = seg_outputs0[-1][:,1:2,:,:]
+    
+        #    for i in range(self.num_classes-1):
+        #        final_output = torch.cat((final_output, names['seg_outputs' + str(i+1)][-1][:,1:2,:,:]),dim=1)
 
+        #if len(seg_outputs0[-1].shape)==5:
+        #    final_output = seg_outputs0[-1][:,1:2,:,:,:]
+    
+        for i in range(self.num_classes-1):
+            final_output = torch.cat((final_output, names['seg_outputs' + str(i+1)][-1]),dim=1)
+        #final_output = torch.cat((seg_outputs0[-1],seg_outputs1[-1],seg_outputs2[-1]),dim=1)      
+
+        #print('final_output')
+        #print(final_output.shape)
+        #print(seg_outputs[-1].shape)
+        
         if self._deep_supervision and self.do_ds:
             return tuple([seg_outputs[-1]] + [i(j) for i, j in
                                               zip(list(self.upscale_logits_ops)[::-1], seg_outputs[:-1][::-1])])
         else:
+            #return final_output
             return seg_outputs[-1]
 
     @staticmethod
