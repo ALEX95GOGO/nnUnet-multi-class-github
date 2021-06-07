@@ -97,7 +97,7 @@ def main():
                                "nnunet.experiment_planning" % planner_name2d)
     else:
         planner_2d = None
-    
+
     for t in tasks:
         print("\n\n\n", t)
         cropped_out_dir = os.path.join(nnUNet_cropped_data, t)

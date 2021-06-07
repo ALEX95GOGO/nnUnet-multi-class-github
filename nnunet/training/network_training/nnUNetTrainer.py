@@ -296,7 +296,8 @@ class nnUNetTrainer(NetworkTrainer):
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
 
-    def run_training(self):
+    def save_debug_information(self):
+        # saving some debug information
         dct = OrderedDict()
         for k in self.__dir__():
             if not k.startswith("__"):
@@ -313,6 +314,8 @@ class nnUNetTrainer(NetworkTrainer):
 
         shutil.copy(self.plans_file, join(self.output_folder_base, "plans.pkl"))
 
+    def run_training(self):
+        self.save_debug_information()
         super(nnUNetTrainer, self).run_training()
 
     def load_plans_file(self):
@@ -454,10 +457,12 @@ class nnUNetTrainer(NetworkTrainer):
         print("preprocessing...")
         d, s, properties = self.preprocess_patient(input_files)
         print("predicting...")
-        pred = self.predict_preprocessed_data_return_seg_and_softmax(d, self.data_aug_params["do_mirror"],
-                                                                     self.data_aug_params['mirror_axes'], True, 0.5,
-                                                                     True, 'constant', {'constant_values': 0},
-                                                                     self.patch_size, True,
+        pred = self.predict_preprocessed_data_return_seg_and_softmax(d, do_mirroring=self.data_aug_params["do_mirror"],
+                                                                     mirror_axes=self.data_aug_params['mirror_axes'],
+                                                                     use_sliding_window=True, step_size=0.5,
+                                                                     use_gaussian=True, pad_border_mode='constant',
+                                                                     pad_kwargs={'constant_values': 0},
+                                                                     verbose=True, all_in_gpu=False,
                                                                      mixed_precision=mixed_precision)[1]
         pred = pred.transpose([0] + [i + 1 for i in self.transpose_backward])
 
@@ -481,7 +486,7 @@ class nnUNetTrainer(NetworkTrainer):
                                                          mirror_axes: Tuple[int] = None,
                                                          use_sliding_window: bool = True, step_size: float = 0.5,
                                                          use_gaussian: bool = True, pad_border_mode: str = 'constant',
-                                                         pad_kwargs: dict = None, all_in_gpu: bool = True,
+                                                         pad_kwargs: dict = None, all_in_gpu: bool = False,
                                                          verbose: bool = True, mixed_precision: bool = True) -> Tuple[np.ndarray, np.ndarray]:
         """
         :param data:
@@ -511,16 +516,19 @@ class nnUNetTrainer(NetworkTrainer):
 
         current_mode = self.network.training
         self.network.eval()
-        ret = self.network.predict_3D(data, do_mirroring, mirror_axes, use_sliding_window, step_size, self.patch_size,
-                                      self.regions_class_order, use_gaussian, pad_border_mode, pad_kwargs,
-                                      all_in_gpu, verbose, mixed_precision=mixed_precision)
+        ret = self.network.predict_3D(data, do_mirroring=do_mirroring, mirror_axes=mirror_axes,
+                                      use_sliding_window=use_sliding_window, step_size=step_size,
+                                      patch_size=self.patch_size, regions_class_order=self.regions_class_order,
+                                      use_gaussian=use_gaussian, pad_border_mode=pad_border_mode,
+                                      pad_kwargs=pad_kwargs, all_in_gpu=all_in_gpu, verbose=verbose,
+                                      mixed_precision=mixed_precision)
         self.network.train(current_mode)
         return ret
 
     def validate(self, do_mirroring: bool = True, use_sliding_window: bool = True, step_size: float = 0.5,
                  save_softmax: bool = True, use_gaussian: bool = True, overwrite: bool = True,
                  validation_folder_name: str = 'validation_raw', debug: bool = False, all_in_gpu: bool = False,
-                 segmentation_export_kwargs: dict = None):
+                 segmentation_export_kwargs: dict = None, run_postprocessing_on_folds: bool = True):
         """
         if debug=True then the temporary files generated for postprocessing determination will be kept
         """
@@ -586,9 +594,12 @@ class nnUNetTrainer(NetworkTrainer):
                 print(k, data.shape)
                 data[-1][data[-1] == -1] = 0
 
-                softmax_pred = self.predict_preprocessed_data_return_seg_and_softmax(data[:-1], do_mirroring,
-                                                                                     mirror_axes, use_sliding_window,
-                                                                                     step_size, use_gaussian,
+                softmax_pred = self.predict_preprocessed_data_return_seg_and_softmax(data[:-1],
+                                                                                     do_mirroring=do_mirroring,
+                                                                                     mirror_axes=mirror_axes,
+                                                                                     use_sliding_window=use_sliding_window,
+                                                                                     step_size=step_size,
+                                                                                     use_gaussian=use_gaussian,
                                                                                      all_in_gpu=all_in_gpu,
                                                                                      mixed_precision=self.fp16)[1]
 
@@ -636,15 +647,16 @@ class nnUNetTrainer(NetworkTrainer):
                              json_author="Fabian",
                              json_task=task, num_threads=default_num_threads)
 
-        # in the old nnunet we would stop here. Now we add a postprocessing. This postprocessing can remove everything
-        # except the largest connected component for each class. To see if this improves results, we do this for all
-        # classes and then rerun the evaluation. Those classes for which this resulted in an improved dice score will
-        # have this applied during inference as well
-        self.print_to_log_file("determining postprocessing")
-        determine_postprocessing(self.output_folder, self.gt_niftis_folder, validation_folder_name,
-                                 final_subf_name=validation_folder_name + "_postprocessed", debug=debug)
-        # after this the final predictions for the vlaidation set can be found in validation_folder_name_base + "_postprocessed"
-        # They are always in that folder, even if no postprocessing as applied!
+        if run_postprocessing_on_folds:
+            # in the old nnunet we would stop here. Now we add a postprocessing. This postprocessing can remove everything
+            # except the largest connected component for each class. To see if this improves results, we do this for all
+            # classes and then rerun the evaluation. Those classes for which this resulted in an improved dice score will
+            # have this applied during inference as well
+            self.print_to_log_file("determining postprocessing")
+            determine_postprocessing(self.output_folder, self.gt_niftis_folder, validation_folder_name,
+                                     final_subf_name=validation_folder_name + "_postprocessed", debug=debug)
+            # after this the final predictions for the vlaidation set can be found in validation_folder_name_base + "_postprocessed"
+            # They are always in that folder, even if no postprocessing as applied!
 
         # detemining postprocesing on a per-fold basis may be OK for this fold but what if another fold finds another
         # postprocesing to be better? In this case we need to consolidate. At the time the consolidation is going to be
@@ -671,20 +683,46 @@ class nnUNetTrainer(NetworkTrainer):
         self.network.train(current_mode)
 
     def run_online_evaluation(self, output, target):
+        #import pdb
+        #pdb.set_trace()
         with torch.no_grad():
+            #print(target.shape)
             num_classes = output.shape[1]
             output_softmax = softmax_helper(output)
-            output_seg = output_softmax.argmax(1)
-            target = target[:, 0]
+            if len(output) == 4:
+                output_seg = output_softmax[:,1:,:,:]
+            if len(output) == 5:
+                output_seg = output_softmax[:,1:,:,:,:]
+            
+            output_seg[output_seg>0.5]=1
+            output_seg[output_seg<=0.5]=0
+            #output_seg = output_softmax.argmax(1)
+            #target = target[:, 0]
             axes = tuple(range(1, len(target.shape)))
             tp_hard = torch.zeros((target.shape[0], num_classes - 1)).to(output_seg.device.index)
             fp_hard = torch.zeros((target.shape[0], num_classes - 1)).to(output_seg.device.index)
             fn_hard = torch.zeros((target.shape[0], num_classes - 1)).to(output_seg.device.index)
-            for c in range(1, num_classes):
-                tp_hard[:, c - 1] = sum_tensor((output_seg == c).float() * (target == c).float(), axes=axes)
-                fp_hard[:, c - 1] = sum_tensor((output_seg == c).float() * (target != c).float(), axes=axes)
-                fn_hard[:, c - 1] = sum_tensor((output_seg != c).float() * (target == c).float(), axes=axes)
-
+            
+            #import pdb
+            #pdb.set_trace()
+            '''
+            if len(output) == 4:
+                for c in range(1, num_classes):
+                    tp_hard[:, c - 1] = sum_tensor(output_seg[:,c-1:c,:,:] * target[:,c-1:c,:,:], axes=axes)
+                    fp_hard[:, c - 1] = sum_tensor(output_seg[:,c-1:c,:,:] * (1-target[:,c-1:c,:,:]), axes=axes)
+                    fn_hard[:, c - 1] = sum_tensor((1-output_seg[:,c-1:c,:,:]) * target[:,c-1:c,:,:], axes=axes)
+            '''
+            if len(output) == 4:
+                for c in range(1, num_classes):
+                    tp_hard[:, c - 1] = sum_tensor((output_seg[:,c-1:c,:,:] == 1).float() * (target[:,c-1:c,:,:] == 1).float(), axes=axes)
+                    fp_hard[:, c - 1] = sum_tensor((output_seg[:,c-1:c,:,:] == 1).float() * (target[:,c-1:c,:,:] != 1).float(), axes=axes)
+                    fn_hard[:, c - 1] = sum_tensor((output_seg[:,c-1:c,:,:] != 1).float() * (target[:,c-1:c,:,:] == 1).float(), axes=axes)
+            
+            if len(output) == 5:
+                for c in range(1, num_classes):
+                    tp_hard[:, c - 1] = sum_tensor((output_seg[:,c-1:c,:,:,:] == 1).float() * (target[:,c-1:c,:,:,:] == 1).float(), axes=axes)
+                    fp_hard[:, c - 1] = sum_tensor((output_seg[:,c-1:c,:,:,:] == 1).float() * (target[:,c-1:c,:,:,:] != 1).float(), axes=axes)
+                    fn_hard[:, c - 1] = sum_tensor((output_seg[:,c-1:c,:,:,:] != 1).float() * (target[:,c-1:c,:,:,:] == 1).float(), axes=axes)
             tp_hard = tp_hard.sum(0, keepdim=False).detach().cpu().numpy()
             fp_hard = fp_hard.sum(0, keepdim=False).detach().cpu().numpy()
             fn_hard = fn_hard.sum(0, keepdim=False).detach().cpu().numpy()

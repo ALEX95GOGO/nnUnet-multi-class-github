@@ -62,8 +62,6 @@ def load_case_from_list_of_files(data_files, seg_file=None):
     assert isinstance(data_files, list) or isinstance(data_files, tuple), "case must be either a list or a tuple"
     properties = OrderedDict()
     data_itk = [sitk.ReadImage(f) for f in data_files]
-    
-    #data_itk = sitk.ReadImage(data_files)
 
     properties["original_size_of_raw_data"] = np.array(data_itk[0].GetSize())[[2, 1, 0]]
     properties["original_spacing"] = np.array(data_itk[0].GetSpacing())[[2, 1, 0]]
@@ -75,20 +73,11 @@ def load_case_from_list_of_files(data_files, seg_file=None):
     properties["itk_direction"] = data_itk[0].GetDirection()
 
     data_npy = np.vstack([sitk.GetArrayFromImage(d)[None] for d in data_itk])
-    #data_npy = sitk.GetArrayFromImage(data_itk)[None].astype(np.float32)
-    print('-----data_npy------')
-    print('-----------')
-    print(data_npy.shape)
     if seg_file is not None:
         seg_itk = [sitk.ReadImage(f) for f in seg_file]
         #seg_itk = sitk.ReadImage(seg_file)
         #seg_npy = sitk.GetArrayFromImage(seg_itk)[None].astype(np.float32)
-        seg_npy = np.vstack([sitk.GetArrayFromImage(d)[None] for d in seg_itk])
-        #seg_npy[seg_npy>1] = 0
-        print('------seg_npy-----')
-
-        print('-----------')
-        print(seg_npy.shape)
+        seg_npy = np.vstack([sitk.GetArrayFromImage(d)[None].astype(np.float32) for d in seg_itk])
     else:
         seg_npy = None
     return data_npy.astype(np.float32), seg_npy, properties
@@ -165,30 +154,18 @@ class ImageCropper(object):
     @staticmethod
     def crop_from_list_of_files(data_files, seg_file=None):
         data, seg, properties = load_case_from_list_of_files(data_files, seg_file)
-        #print(':::::::::::::::')
-        #print(np.argwhere(seg==255))
-
         return ImageCropper.crop(data, properties, seg)
 
     def load_crop_save(self, case, case_identifier, overwrite_existing=False):
         try:
-            #print(case_identifier)
-            #print('------------------------')
-            #print(case[0])
-            #print('------------------------')
-            #print(case[1:])
+            print(case_identifier)
             if overwrite_existing \
                     or (not os.path.isfile(os.path.join(self.output_folder, "%s.npz" % case_identifier))
                         or not os.path.isfile(os.path.join(self.output_folder, "%s.pkl" % case_identifier))):
-                 
+
+                #data, seg, properties = self.crop_from_list_of_files(case[:-1], case[-1])
                 data, seg, properties = self.crop_from_list_of_files([case[0]], case[1:])
-                #print(':::::::::::::::')
-                #print(np.argwhere(seg==255))
                 all_data = np.vstack((data, seg))
-                if np.sum(all_data[1:]>1)>0:
-                    all_data[1:][all_data[1:]>1]=1
-                    print(np.sum(all_data[1:]>1))
-        
                 np.savez_compressed(os.path.join(self.output_folder, "%s.npz" % case_identifier), data=all_data)
                 with open(os.path.join(self.output_folder, "%s.pkl" % case_identifier), 'wb') as f:
                     pickle.dump(properties, f)
@@ -212,16 +189,18 @@ class ImageCropper(object):
         :param output_folder:
         :return:
         """
-        #print('-----------------------------')
-        #print(list_of_files)
         if output_folder is not None:
             self.output_folder = output_folder
 
         output_folder_gt = os.path.join(self.output_folder, "gt_segmentations")
         maybe_mkdir_p(output_folder_gt)
         for j, case in enumerate(list_of_files):
-            if case[-1] is not None:
-                shutil.copy(case[-1], output_folder_gt)
+            print(case)
+            #if case[-1] is not None:
+            #    shutil.copy(case[-1], output_folder_gt)
+            for ii in range(len(case)-1):
+                if case[ii+1] is not None:
+                    shutil.copy(case[ii+1], output_folder_gt)      
 
         list_of_args = []
         for j, case in enumerate(list_of_files):

@@ -205,17 +205,20 @@ class DataLoader3D(SlimDataLoaderBase):
         return not batch_idx < round(self.batch_size * (1 - self.oversample_foreground_percent))
 
     def determine_shapes(self):
-        if self.has_prev_stage:
-            num_seg = 2
-        else:
-            num_seg = 1
+        #if self.has_prev_stage:
+        #    num_seg = 2
+        #else:
+        #    num_seg = 1
+
 
         k = list(self._data.keys())[0]
         if isfile(self._data[k]['data_file'][:-4] + ".npy"):
             case_all_data = np.load(self._data[k]['data_file'][:-4] + ".npy", self.memmap_mode)
         else:
             case_all_data = np.load(self._data[k]['data_file'])['data']
-        num_color_channels = case_all_data.shape[0] - 1
+        #num_color_channels = case_all_data.shape[0] - 1
+        num_seg = case_all_data.shape[0] - 1
+        num_color_channels = 1
         data_shape = (self.batch_size, num_color_channels, *self.patch_size)
         seg_shape = (self.batch_size, num_seg, *self.patch_size)
         return data_shape, seg_shape
@@ -355,13 +358,13 @@ class DataLoader3D(SlimDataLoaderBase):
                                           valid_bbox_y_lb:valid_bbox_y_ub,
                                           valid_bbox_z_lb:valid_bbox_z_ub]
 
-            data[j] = np.pad(case_all_data[:-1], ((0, 0),
+            data[j] = np.pad(case_all_data[:1], ((0, 0),
                                                   (-min(0, bbox_x_lb), max(bbox_x_ub - shape[0], 0)),
                                                   (-min(0, bbox_y_lb), max(bbox_y_ub - shape[1], 0)),
                                                   (-min(0, bbox_z_lb), max(bbox_z_ub - shape[2], 0))),
                              self.pad_mode, **self.pad_kwargs_data)
 
-            seg[j, 0] = np.pad(case_all_data[-1:], ((0, 0),
+            seg[j, 0] = np.pad(case_all_data[1:], ((0, 0),
                                                     (-min(0, bbox_x_lb), max(bbox_x_ub - shape[0], 0)),
                                                     (-min(0, bbox_y_lb), max(bbox_y_ub - shape[1], 0)),
                                                     (-min(0, bbox_z_lb), max(bbox_z_ub - shape[2], 0))),
@@ -425,16 +428,17 @@ class DataLoader2D(SlimDataLoaderBase):
             self.need_to_pad += pad_sides
         self.pad_sides = pad_sides
         self.data_shape, self.seg_shape = self.determine_shapes()
-
+        
     def determine_shapes(self):
-        num_seg = 1
 
         k = list(self._data.keys())[0]
         if isfile(self._data[k]['data_file'][:-4] + ".npy"):
             case_all_data = np.load(self._data[k]['data_file'][:-4] + ".npy", self.memmap_mode)
         else:
             case_all_data = np.load(self._data[k]['data_file'])['data']
-        num_color_channels = case_all_data.shape[0] - num_seg
+        #num_color_channels = case_all_data.shape[0] - num_seg
+        num_seg = case_all_data.shape[0] - 1
+        num_color_channels = 1
         data_shape = (self.batch_size, num_color_channels, *self.patch_size)
         seg_shape = (self.batch_size, num_seg, *self.patch_size)
         return data_shape, seg_shape
@@ -576,15 +580,18 @@ class DataLoader2D(SlimDataLoaderBase):
             case_all_data = case_all_data[:, valid_bbox_x_lb:valid_bbox_x_ub,
                             valid_bbox_y_lb:valid_bbox_y_ub]
 
-            case_all_data_donly = np.pad(case_all_data[:-1], ((0, 0),
+            case_all_data_donly = np.pad(case_all_data[:1], ((0, 0),
                                                               (-min(0, bbox_x_lb), max(bbox_x_ub - shape[0], 0)),
                                                               (-min(0, bbox_y_lb), max(bbox_y_ub - shape[1], 0))),
                                          self.pad_mode, **self.pad_kwargs_data)
 
-            case_all_data_segonly = np.pad(case_all_data[-1:], ((0, 0),
+            case_all_data_segonly = np.pad(case_all_data[1:], ((0, 0),
                                                                 (-min(0, bbox_x_lb), max(bbox_x_ub - shape[0], 0)),
                                                                 (-min(0, bbox_y_lb), max(bbox_y_ub - shape[1], 0))),
                                            'constant', **{'constant_values': -1})
+            
+            #print(case_all_data_donly.shape)
+            #print(case_all_data_segonly.shape)
 
             data[j] = case_all_data_donly
             seg[j] = case_all_data_segonly

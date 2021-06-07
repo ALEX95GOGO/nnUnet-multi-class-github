@@ -57,7 +57,8 @@ class GDL(nn.Module):
             y_onehot = torch.zeros(shp_x)
             if x.device.type == "cuda":
                 y_onehot = y_onehot.cuda(x.device.index)
-            y_onehot.scatter_(1, gt, 1)
+            y_onehot.scatter_(1, gt, 1) 
+
 
         if self.apply_nonlin is not None:
             x = self.apply_nonlin(x)
@@ -114,11 +115,24 @@ def get_tp_fp_fn_tn(net_output, gt, axes=None, mask=None, square=False):
 
     shp_x = net_output.shape
     shp_y = gt.shape
-
+    #import pdb
+    #pdb.set_trace()
     with torch.no_grad():
         if len(shp_x) != len(shp_y):
             gt = gt.view((shp_y[0], 1, *shp_y[1:]))
-
+        
+        #print('debug')
+        #print(torch.sum(gt[:,1,:,:]))
+        gt_copy = gt.copy_(gt)
+        background_channel = torch.sum(gt_copy,axis=1)       
+        background_channel[background_channel==0]=-1     
+        background_channel[background_channel>0]=0 
+        background_channel[background_channel==-1]=1
+        background_channel = torch.unsqueeze(background_channel,1)
+        #print(torch.sum(gt[:,1,:,:]))
+        gt = torch.cat((background_channel, gt),1)
+        
+            
         if all([i == j for i, j in zip(net_output.shape, gt.shape)]):
             # if this is the case then gt is probably already a one hot encoding
             y_onehot = gt
@@ -128,7 +142,7 @@ def get_tp_fp_fn_tn(net_output, gt, axes=None, mask=None, square=False):
             if net_output.device.type == "cuda":
                 y_onehot = y_onehot.cuda(net_output.device.index)
             y_onehot.scatter_(1, gt, 1)
-
+    #print(torch.sum(y_onehot[:,2,:,:]))
     tp = net_output * y_onehot
     fp = net_output * (1 - y_onehot)
     fn = (1 - net_output) * y_onehot
